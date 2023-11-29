@@ -3,7 +3,11 @@
 <template>
   <div>
     <h1>End-to-End Encryption</h1>
-
+    Clipboard mode: <button @click="listen_clipboard = !listen_clipboard">{{ listen_clipboard ? 'listening' : 'manual'
+    }}</button>
+    <br>
+    Phase override({{ phase }}): <button @click="phase--" :disabled="phase <= 0">-</button><button @click="phase++"
+      :disabled="phase >= 2">+</button>
     <div>
       <div>
         <div v-if="phase === 0">
@@ -17,7 +21,7 @@
             </li>
             <li>
               <div>
-                <button @click="importPeerPubkey()">Paste</button>
+                <button @click="checkClickboard">Paste</button>
                 <strong>the content your peer sent to you</strong>
               </div>
             </li>
@@ -35,7 +39,7 @@
             </li>
             <li>
               <div>
-                <button @click="importPeerAes()">Paste</button>
+                <button @click="checkClickboard">Paste</button>
                 <strong>what your peer just sent you</strong>
               </div>
             </li>
@@ -54,7 +58,7 @@
           <div>
             <strong>Received Message from User B:</strong>
             <!-- <input v-model="pairMsg" /> -->
-            <button @click="pastePairMsg()">Paste</button>
+            <button @click="checkClickboard">Paste</button>
             <span v-if="peerMsgSynced" class="green-circle"></span>
             <span v-if="!peerMsgSynced" class="red-circle"></span>
           </div>
@@ -74,8 +78,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue';
 import { Cipher2, decodeBase64ToBuffer, arrayBufferToBase64 } from "@/modules/cipher";
-import { auditTime, throttleTime } from "rxjs/operators"
+import { auditTime } from "rxjs/operators"
 import { Subject } from 'rxjs'
+import baddha from './transformers/buddha'
+
+const transformer = baddha
 const userAPublicKey = ref(null);
 const myMsg = ref("");
 const myMsgSynced = ref(false)
@@ -86,15 +93,22 @@ const historyMessagesReversed = computed(() => historyMessages.value.slice().rev
 let cipher: Cipher2;
 const phase = ref(0)
 let timer = null
-onMounted(() => {
-  initialize()
-  timer && clearInterval(timer)
-  timer = setInterval(() => {
-    checkClickboard()
-  }, 2000)
+const listen_clipboard = ref(false)
+
+watch(listen_clipboard, (v) => {
+  if (v) {
+    timer && clearInterval(timer)
+    timer = setInterval(() => {
+      checkClickboard()
+    }, 2000)
+  } else {
+    clearInterval(timer)
+  }
 })
 
-
+onMounted(() => {
+  initialize()
+})
 
 const myMessageUpdateObject: Subject<any> = new Subject()
 const peerMessageUpdateObject: Subject<any> = new Subject()
@@ -155,11 +169,14 @@ const dec = async (pairMsg: string) => {
 }
 
 const writeToClipboard = async (text: string) => {
-  await navigator.clipboard.writeText(text);
+  const transformed = transformer.encode(text)
+  await navigator.clipboard.writeText(transformed);
 };
 
 const copyClipboard = async () => {
-  return await navigator.clipboard.readText();
+  const text = await navigator.clipboard.readText()
+  const transformed = transformer.decode(text)
+  return transformed;
 };
 
 const copyMyPubKey = async () => {
@@ -172,9 +189,9 @@ const copyMyAes = async () => {
   await writeToClipboard(aes_header + arrayBufferToBase64(encryptedAes));
 }
 
-const importPeerPubkey = async (content = '') => {
+const importPeerPubkey = async (content) => {
   try {
-    const buf = decodeBase64ToBuffer(content ?? await copyClipboard())
+    const buf = decodeBase64ToBuffer(content)
     await cipher.setPeerPublicKey(buf)
     phase.value = 1
   } catch (e) {
@@ -182,10 +199,9 @@ const importPeerPubkey = async (content = '') => {
   }
 }
 
-const importPeerAes = async (content = '') => {
+const importPeerAes = async (content) => {
   try {
-    const buf = decodeBase64ToBuffer(content ?? await copyClipboard())
-    console.log(`buf`, buf)
+    const buf = decodeBase64ToBuffer(content)
     await cipher.decryptAndSaveAESKey(buf)
     phase.value = 2
   } catch (e) {
@@ -193,8 +209,8 @@ const importPeerAes = async (content = '') => {
   }
 }
 
-const pastePairMsg = async (content = '') => {
-  const pairMsg = content ?? await copyClipboard()
+const pastePairMsg = async (content) => {
+  const pairMsg = content
   peerMsgSynced.value = false
   peerMessageUpdateObject.next(pairMsg)
 }
