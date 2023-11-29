@@ -17,7 +17,7 @@
             </li>
             <li>
               <div>
-                <button @click="importPeerPubkey">Paste</button>
+                <button @click="importPeerPubkey()">Paste</button>
                 <strong>the content your peer sent to you</strong>
               </div>
             </li>
@@ -35,7 +35,7 @@
             </li>
             <li>
               <div>
-                <button @click="importPeerAes">Paste</button>
+                <button @click="importPeerAes()">Paste</button>
                 <strong>what your peer just sent you</strong>
               </div>
             </li>
@@ -54,7 +54,7 @@
           <div>
             <strong>Received Message from User B:</strong>
             <!-- <input v-model="pairMsg" /> -->
-            <button @click="pastePairMsg">Paste</button>
+            <button @click="pastePairMsg()">Paste</button>
             <span v-if="peerMsgSynced" class="green-circle"></span>
             <span v-if="!peerMsgSynced" class="red-circle"></span>
           </div>
@@ -85,10 +85,16 @@ const historyMessagesReversed = computed(() => historyMessages.value.slice().rev
 
 let cipher: Cipher2;
 const phase = ref(0)
-
+let timer = null
 onMounted(() => {
   initialize()
+  timer && clearInterval(timer)
+  timer = setInterval(() => {
+    checkClickboard()
+  }, 2000)
 })
+
+
 
 const myMessageUpdateObject: Subject<any> = new Subject()
 const peerMessageUpdateObject: Subject<any> = new Subject()
@@ -124,7 +130,7 @@ const enc = async () => {
     iv // Example: Use a random IV (Initialization Vector)
   )
 
-  writeToClipboard(arrayBufferToBase64(obuf))
+  writeToClipboard(msg_header + arrayBufferToBase64(obuf))
   myMsgSynced.value = true
 }
 
@@ -158,18 +164,17 @@ const copyClipboard = async () => {
 
 const copyMyPubKey = async () => {
   const pubkey = await cipher.getMyPublicKey()
-  await writeToClipboard(arrayBufferToBase64(pubkey));
+  await writeToClipboard(pubkey_header + arrayBufferToBase64(pubkey));
 }
 
 const copyMyAes = async () => {
   const encryptedAes = await cipher.getEncryptedAESKey()
-  await writeToClipboard(arrayBufferToBase64(encryptedAes));
+  await writeToClipboard(aes_header + arrayBufferToBase64(encryptedAes));
 }
 
-const importPeerPubkey = async () => {
+const importPeerPubkey = async (content = '') => {
   try {
-    const buf = decodeBase64ToBuffer(await copyClipboard())
-    console.log(`buf`, buf)
+    const buf = decodeBase64ToBuffer(content ?? await copyClipboard())
     await cipher.setPeerPublicKey(buf)
     phase.value = 1
   } catch (e) {
@@ -177,9 +182,9 @@ const importPeerPubkey = async () => {
   }
 }
 
-const importPeerAes = async () => {
+const importPeerAes = async (content = '') => {
   try {
-    const buf = decodeBase64ToBuffer(await copyClipboard())
+    const buf = decodeBase64ToBuffer(content ?? await copyClipboard())
     console.log(`buf`, buf)
     await cipher.decryptAndSaveAESKey(buf)
     phase.value = 2
@@ -188,10 +193,64 @@ const importPeerAes = async () => {
   }
 }
 
-const pastePairMsg = async () => {
-  const pairMsg = await copyClipboard()
+const pastePairMsg = async (content = '') => {
+  const pairMsg = content ?? await copyClipboard()
   peerMsgSynced.value = false
   peerMessageUpdateObject.next(pairMsg)
+}
+const rand_str = () => {
+  return Math.random().toString(36).substring(2, 15)
+}
+
+const myName = rand_str()
+const pubkey_header = `${myName};_pub_key_;`
+const aes_header = `${myName};_aes_key_;`
+const msg_header = `${myName};_msg_;`
+
+let old_text = ''
+const checkClickboard = async () => {
+  let text = ''
+  try {
+    text = await copyClipboard()
+  } catch {
+    return
+  }
+  if (text !== old_text) {
+    old_text = text
+    console.log(`text`, text)
+    const frags = text.split(';')
+    if (frags.length < 2) {
+      return
+    }
+    const name = frags[0]
+    if (name === myName) {
+      console.log(`my name, ignore`)
+      return
+    }
+    const content = frags[2]
+    switch (frags[1]) {
+      case '_pub_key_':
+        if (phase.value !== 0) {
+          return
+        }
+        await importPeerPubkey(content)
+        break;
+      case '_aes_key_':
+        if (phase.value !== 1) {
+          return
+        }
+        await importPeerAes(content)
+        break;
+      case '_msg_':
+        if (phase.value !== 2) {
+          return
+        }
+        await pastePairMsg(content)
+        break;
+      default:
+        break;
+    }
+  }
 }
 </script>
 <style scoped>
