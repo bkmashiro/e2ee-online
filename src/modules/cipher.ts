@@ -120,6 +120,14 @@ export class Cipher2 {
     return exported
   }
 
+  public async getPairAESKey() {
+    const exported = await self.crypto.subtle.exportKey(
+      'raw',
+      this.pairAESKey
+    )
+    return exported
+  }
+
   public async setPeerPublicKey(publicKey: ArrayBuffer) {
     let imported = await self.crypto.subtle.importKey(
       'spki',
@@ -203,15 +211,64 @@ export class Cipher2 {
     return decryptedMessage
   }
 
-  public AESKeyReady() {
+  public async decryptMessageWithMyAes(encryptedMessage: ArrayBuffer, iv: Uint8Array) {
+    const decryptedMessage = await self.crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv
+      },
+      this.myAESKey,
+      encryptedMessage
+    )
+
+    return decryptedMessage
+  }
+
+  public get AESKeyReady() {
     return this.myAESKey !== null
+  }
+
+  public get pairAESKeyReady() {
+    return this.pairAESKey !== null
   }
 }
 
 export function arrayBufferToString(buffer: ArrayBuffer) {
-  return new TextDecoder().decode(buffer)
+  return new TextDecoder('utf-8').decode(buffer)
+}
+
+export function u8ArrayBufferToString(buffer: ArrayBuffer) {
+  return new Uint8Array(buffer).toString();
 }
 
 export function stringToArrayBuffer(str: string): ArrayBuffer {
   return new TextEncoder().encode(str).buffer
+}
+
+export function ab2str(buf) {
+  return String.fromCharCode.apply(null, new Uint8Array(buf));
+}
+
+export function arrayBufferToBase64(buffer) {
+  const binary = new Uint8Array(buffer);
+  const byteArray = Array.from(binary);
+  const base64String = btoa(String.fromCharCode(...byteArray));
+  return base64String;
+}
+
+export function decodeBase64ToBuffer(base64String) {
+  // 将Base64字符串解码为二进制数据
+  const binaryString = atob(base64String);
+
+  // 将二进制字符串转换为 Uint8Array
+  const binaryArray = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    binaryArray[i] = binaryString.charCodeAt(i);
+  }
+
+  // 创建 ArrayBuffer
+  const arrayBuffer = binaryArray.buffer;
+
+  // 返回 ArrayBuffer
+  return arrayBuffer;
 }

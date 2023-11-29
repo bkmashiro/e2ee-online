@@ -13,28 +13,37 @@
         <h2>User A</h2>
         <div>
           <strong>Public Key:</strong>
-          <div>{{ userAPublicKey ? 'generated' : 'unk'}}</div>
+          <div>{{ userAPublicKey ? 'generated' : 'unk' }}</div>
+          <button @click="savePubKeyToClipboard">Copy</button>
         </div>
         <div>
           <strong>Public Key from User B:</strong>
-          <input v-model="userBPublicKeyInput" />
+          <input v-model="userBPublicKeyInput" @blur="genEncryptedAes" />
         </div>
 
-        <!-- Encrypt AES with pub key -->
         <div>
-          <strong>encrypted AES</strong>
+          <strong>my encrypted AES</strong>
           <input v-model="encryptedAes" />
-          <button @click="sendMessageToUserB">Send</button>
+          <button @click="copyEncryptedAes">Gen</button>
+        </div>
+
+        <div>
+          <strong>encrypted AES from user B</strong>
+          <input v-model="userBEncrypetAes" />
+          <button @click="importBAes">import</button>
         </div>
 
         <div>
           <strong>Message to User B:</strong>
-          <input v-model="userAMessage" />
-          <button @click="sendMessageToUserB">Send</button>
+          <input v-model="outmsg" />
+          <button @click="enc"> -> </button>
+          <input v-model="encryptedUserBMessage" />
         </div>
         <div>
           <strong>Received Message from User B:</strong>
-          <div>{{ receivedMessageFromUserB }}</div>
+          <input v-model="rawReceivedMessageFromUserB" />
+          <button @click="dec"> -> </button>
+          <input v-model="receivedMessageFromUserB" />
         </div>
       </div>
     </div>
@@ -42,21 +51,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { Cipher2, arrayBufferToString, stringToArrayBuffer } from "@/modules/cipher";
+import { ref, computed } from 'vue';
+import { Cipher2, arrayBufferToString, stringToArrayBuffer, u8ArrayBufferToString, ab2str, decodeBase64ToBuffer, arrayBufferToBase64 } from "@/modules/cipher";
 
 const initialized = ref(false);
 const userAPublicKey = ref(null);
-const userBPublicKey = ref(null);
 const encryptedAes = ref(null);
-const userAPublicKeyInput = ref("");
+const userBEncrypetAes = ref("");
 const userBPublicKeyInput = ref("");
-const userAMessage = ref("");
-const userBMessage = ref("");
-const receivedMessageFromUserA = ref(null);
-const receivedMessageFromUserB = ref(null);
+const outmsg = ref("");
+const rawReceivedMessageFromUserB = ref("");
 
-let cipher;
+const encryptedUserBMessage = ref("");
+
+const receivedMessageFromUserB = ref("")
+let cipher: Cipher2;
 
 const initialize = async () => {
   cipher = new Cipher2();
@@ -68,37 +77,59 @@ const initialize = async () => {
   initialized.value = true;
 };
 
-const sendMessageToUserB = async () => {
-  await cipher.setPeerPublicKey(stringToArrayBuffer(userBPublicKeyInput.value));
+const enc = async () => {
+  if (!cipher.AESKeyReady) {
+    return null;
+  }
+  const iv =  new Uint8Array(12)
+  const obuf = await cipher.encryptMessage(
+    outmsg.value,
+    iv // Example: Use a random IV (Initialization Vector)
+  )
 
-  const encryptedMessage = await cipher.encryptMessage(
-    userAMessage.value,
-    new Uint8Array(16) // Example: Use a random IV (Initialization Vector)
+  encryptedUserBMessage.value = arrayBufferToBase64(obuf);
+
+}
+
+const dec = async () => {
+  console.log(`cipher.pairAESKeyReady`, cipher.pairAESKeyReady)
+  if (!cipher.pairAESKeyReady) {
+    return null;
+  }
+
+  const buf = decodeBase64ToBuffer(rawReceivedMessageFromUserB.value)
+
+  const decrypted = await cipher.decryptMessage(
+    buf,
+    new Uint8Array(12)
   );
 
-  // Simulate sending the message to User B
-  // In a real application, this would be sent through a secure channel
-  const decryptedMessage = await cipher.decryptMessage(
-    encryptedMessage,
-    new Uint8Array(16)
-  );
-  receivedMessageFromUserB.value = arrayBufferToString(decryptedMessage);
-};
+  receivedMessageFromUserB.value = new TextDecoder().decode(decrypted)
+}
 
-const sendMessageToUserA = async () => {
-  await cipher.setPeerPublicKey(stringToArrayBuffer(userAPublicKeyInput.value));
+const savePubKeyToClipboard = async () => {
+  const pubkey = await cipher.getMyPublicKey()
+  console.log(`pubkey`, pubkey)
+  await navigator.clipboard.writeText(arrayBufferToBase64(pubkey));
+}
 
-  const encryptedMessage = await cipher.encryptMessage(
-    userBMessage.value,
-    new Uint8Array(16)
-  );
+const genEncryptedAes = async () => {
+  const buf = decodeBase64ToBuffer(userBPublicKeyInput.value)
+  console.log(buf)
+  await cipher.setPeerPublicKey(buf)
+  const eaes = await cipher.getEncryptedAESKey()
+  console.log(eaes)
+  encryptedAes.value = arrayBufferToBase64(eaes)
+}
 
-  // Simulate sending the message to User A
-  // In a real application, this would be sent through a secure channel
-  const decryptedMessage = await cipher.decryptMessage(
-    encryptedMessage,
-    new Uint8Array(16)
-  );
-  receivedMessageFromUserA.value = arrayBufferToString(decryptedMessage);
-};
+const copyEncryptedAes = async () => {
+  await navigator.clipboard.writeText(encryptedAes.value);
+}
+
+const importBAes = async () => {
+  const buf = decodeBase64ToBuffer(userBEncrypetAes.value)
+  console.log(buf)
+  await cipher.decryptAndSaveAESKey(buf)
+  console.warn(`pair aes`, cipher.getPairAESKey())
+}
 </script>
