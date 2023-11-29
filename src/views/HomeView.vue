@@ -18,7 +18,8 @@
         </div>
         <div>
           <strong>Public Key from User B:</strong>
-          <input v-model="userBPublicKeyInput" @blur="genEncryptedAes" />
+          <input v-model="userBPublicKeyInput"
+                 @blur="genEncryptedAes" />
         </div>
 
         <div>
@@ -35,13 +36,13 @@
 
         <div>
           <strong>Message to User B:</strong>
-          <input v-model="outmsg" />
+          <input v-model="myMsg" />
           <button @click="enc"> -> </button>
           <input v-model="encryptedUserBMessage" />
         </div>
         <div>
           <strong>Received Message from User B:</strong>
-          <input v-model="rawReceivedMessageFromUserB" />
+          <input v-model="pairMsg" />
           <button @click="dec"> -> </button>
           <input v-model="receivedMessageFromUserB" />
         </div>
@@ -51,21 +52,35 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
-import { Cipher2, arrayBufferToString, stringToArrayBuffer, u8ArrayBufferToString, ab2str, decodeBase64ToBuffer, arrayBufferToBase64 } from "@/modules/cipher";
-
+import { ref, computed, watch } from 'vue';
+import { Cipher2, decodeBase64ToBuffer, arrayBufferToBase64 } from "@/modules/cipher";
+import { auditTime } from "rxjs/operators"
+import { Subject } from 'rxjs'
 const initialized = ref(false);
 const userAPublicKey = ref(null);
 const encryptedAes = ref(null);
 const userBEncrypetAes = ref("");
 const userBPublicKeyInput = ref("");
-const outmsg = ref("");
-const rawReceivedMessageFromUserB = ref("");
-
+const myMsg = ref("");
+const pairMsg = ref("");
 const encryptedUserBMessage = ref("");
-
 const receivedMessageFromUserB = ref("")
 let cipher: Cipher2;
+
+export const myMessageUpdateObject: Subject<any> = new Subject()
+// audit time 500 ms
+myMessageUpdateObject.pipe(auditTime(500)).subscribe((v) => {
+  console.log(`myMessageUpdateObject`, v)
+  enc()
+})
+
+watch(myMsg, (v) => {
+  myMessageUpdateObject.next(v)
+})
+
+watch(pairMsg, (v) => {
+  dec()
+})
 
 const initialize = async () => {
   cipher = new Cipher2();
@@ -81,9 +96,9 @@ const enc = async () => {
   if (!cipher.AESKeyReady) {
     return null;
   }
-  const iv =  new Uint8Array(12)
+  const iv = new Uint8Array(12)
   const obuf = await cipher.encryptMessage(
-    outmsg.value,
+    myMsg.value,
     iv // Example: Use a random IV (Initialization Vector)
   )
 
@@ -97,7 +112,7 @@ const dec = async () => {
     return null;
   }
 
-  const buf = decodeBase64ToBuffer(rawReceivedMessageFromUserB.value)
+  const buf = decodeBase64ToBuffer(pairMsg.value)
 
   const decrypted = await cipher.decryptMessage(
     buf,
