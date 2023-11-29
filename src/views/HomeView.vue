@@ -2,49 +2,69 @@
 
 <template>
   <div>
-    <h1>End-to-End Encryption Demo</h1>
+    <h1>End-to-End Encryption</h1>
 
-    <div v-if="!initialized">
-      <button @click="initialize">Initialize</button>
-    </div>
-
-    <div v-else>
+    <div>
       <div>
-        <h2>User A</h2>
-        <div>
-          <strong>Public Key:</strong>
-          <div>{{ userAPublicKey ? 'generated' : 'unk' }}</div>
-          <button @click="savePubKeyToClipboard">Copy</button>
-        </div>
-        <div>
-          <strong>Public Key from User B:</strong>
-          <input v-model="userBPublicKeyInput"
-                 @blur="genEncryptedAes" />
-        </div>
-
-        <div>
-          <strong>my encrypted AES</strong>
-          <input v-model="encryptedAes" />
-          <button @click="copyEncryptedAes">Gen</button>
-        </div>
-
-        <div>
-          <strong>encrypted AES from user B</strong>
-          <input v-model="userBEncrypetAes" />
-          <button @click="importBAes">import</button>
+        <div v-if="phase === 0">
+          <h2>Phase 1: Exchange Public Key</h2>
+          <ol>
+            <li>
+              <div>
+                <button @click="copyMyPubKey">Copy</button>
+                <strong>and send this to your peer</strong>
+              </div>
+            </li>
+            <li>
+              <div>
+                <button @click="importPeerPubkey">Paste</button>
+                <strong>the content your peer sent to you</strong>
+              </div>
+            </li>
+          </ol>
         </div>
 
-        <div>
-          <strong>Message to User B:</strong>
-          <input v-model="myMsg" />
-          <button @click="enc"> -> </button>
-          <input v-model="encryptedUserBMessage" />
+        <div v-if="phase === 1">
+          <h2>Phase 2: Swap AES Key</h2>
+          <ol>
+            <li>
+              <div>
+                <button @click="copyMyAes">Copy</button>
+                <strong>this and send to your peer</strong>
+              </div>
+            </li>
+            <li>
+              <div>
+                <button @click="importPeerAes">Paste</button>
+                <strong>what your peer just sent you</strong>
+              </div>
+            </li>
+          </ol>
         </div>
-        <div>
-          <strong>Received Message from User B:</strong>
-          <input v-model="pairMsg" />
-          <button @click="dec"> -> </button>
-          <input v-model="receivedMessageFromUserB" />
+
+        <div v-if="phase === 2">
+          <h2>E2EE Established</h2>
+          <div>
+            <strong>Message to User B:</strong>
+            <input v-model="myMsg" />
+            <button @click="myMsg = ''">Clean</button>
+            <span v-if="myMsgSynced" class="green-circle"></span>
+            <span v-if="!myMsgSynced" class="red-circle"></span>
+          </div>
+          <div>
+            <strong>Received Message from User B:</strong>
+            <!-- <input v-model="pairMsg" /> -->
+            <button @click="pastePairMsg">Paste</button>
+            <span v-if="peerMsgSynced" class="green-circle"></span>
+            <span v-if="!peerMsgSynced" class="red-circle"></span>
+          </div>
+
+          <div>
+            <h2>History messages</h2>
+            <div v-for="msg in historyMessagesReversed">
+              <span>{{ msg }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -52,44 +72,46 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { Cipher2, decodeBase64ToBuffer, arrayBufferToBase64 } from "@/modules/cipher";
-import { auditTime } from "rxjs/operators"
+import { auditTime, throttleTime } from "rxjs/operators"
 import { Subject } from 'rxjs'
-const initialized = ref(false);
 const userAPublicKey = ref(null);
-const encryptedAes = ref(null);
-const userBEncrypetAes = ref("");
-const userBPublicKeyInput = ref("");
 const myMsg = ref("");
-const pairMsg = ref("");
-const encryptedUserBMessage = ref("");
-const receivedMessageFromUserB = ref("")
-let cipher: Cipher2;
+const myMsgSynced = ref(false)
+const peerMsgSynced = ref(false)
+const historyMessages = ref([])
+const historyMessagesReversed = computed(() => historyMessages.value.slice().reverse())
 
-export const myMessageUpdateObject: Subject<any> = new Subject()
+let cipher: Cipher2;
+const phase = ref(0)
+
+onMounted(() => {
+  initialize()
+})
+
+const myMessageUpdateObject: Subject<any> = new Subject()
+const peerMessageUpdateObject: Subject<any> = new Subject()
 // audit time 500 ms
-myMessageUpdateObject.pipe(auditTime(500)).subscribe((v) => {
-  console.log(`myMessageUpdateObject`, v)
+myMessageUpdateObject.pipe(auditTime(200)).subscribe(() => {
   enc()
 })
 
-watch(myMsg, (v) => {
-  myMessageUpdateObject.next(v)
+peerMessageUpdateObject.pipe(auditTime(200)).subscribe((v) => {
+  dec(v)
+
+  peerMsgSynced.value = false
 })
 
-watch(pairMsg, (v) => {
-  dec()
+watch(myMsg, (v) => {
+  myMsgSynced.value = false
+  myMessageUpdateObject.next(v)
 })
 
 const initialize = async () => {
   cipher = new Cipher2();
   await cipher.init();
-
-  // User A
   userAPublicKey.value = await cipher.getMyPublicKey();
-
-  initialized.value = true;
 };
 
 const enc = async () => {
@@ -102,49 +124,90 @@ const enc = async () => {
     iv // Example: Use a random IV (Initialization Vector)
   )
 
-  encryptedUserBMessage.value = arrayBufferToBase64(obuf);
-
+  writeToClipboard(arrayBufferToBase64(obuf))
+  myMsgSynced.value = true
 }
 
-const dec = async () => {
-  console.log(`cipher.pairAESKeyReady`, cipher.pairAESKeyReady)
-  if (!cipher.pairAESKeyReady) {
-    return null;
+const dec = async (pairMsg: string) => {
+  try {
+    if (!cipher.pairAESKeyReady) {
+      return null;
+    }
+
+    const buf = decodeBase64ToBuffer(pairMsg)
+
+    const decrypted = await cipher.decryptMessage(
+      buf,
+      new Uint8Array(12)
+    );
+    const decoded = new TextDecoder().decode(decrypted)
+    historyMessages.value.push(decoded)
+    peerMsgSynced.value = true
+  } catch (e) {
+
   }
-
-  const buf = decodeBase64ToBuffer(pairMsg.value)
-
-  const decrypted = await cipher.decryptMessage(
-    buf,
-    new Uint8Array(12)
-  );
-
-  receivedMessageFromUserB.value = new TextDecoder().decode(decrypted)
 }
 
-const savePubKeyToClipboard = async () => {
+const writeToClipboard = async (text: string) => {
+  await navigator.clipboard.writeText(text);
+};
+
+const copyClipboard = async () => {
+  return await navigator.clipboard.readText();
+};
+
+const copyMyPubKey = async () => {
   const pubkey = await cipher.getMyPublicKey()
-  console.log(`pubkey`, pubkey)
-  await navigator.clipboard.writeText(arrayBufferToBase64(pubkey));
+  await writeToClipboard(arrayBufferToBase64(pubkey));
 }
 
-const genEncryptedAes = async () => {
-  const buf = decodeBase64ToBuffer(userBPublicKeyInput.value)
-  console.log(buf)
-  await cipher.setPeerPublicKey(buf)
-  const eaes = await cipher.getEncryptedAESKey()
-  console.log(eaes)
-  encryptedAes.value = arrayBufferToBase64(eaes)
+const copyMyAes = async () => {
+  const encryptedAes = await cipher.getEncryptedAESKey()
+  await writeToClipboard(arrayBufferToBase64(encryptedAes));
 }
 
-const copyEncryptedAes = async () => {
-  await navigator.clipboard.writeText(encryptedAes.value);
+const importPeerPubkey = async () => {
+  try {
+    const buf = decodeBase64ToBuffer(await copyClipboard())
+    console.log(`buf`, buf)
+    await cipher.setPeerPublicKey(buf)
+    phase.value = 1
+  } catch (e) {
+    console.error(e)
+  }
 }
 
-const importBAes = async () => {
-  const buf = decodeBase64ToBuffer(userBEncrypetAes.value)
-  console.log(buf)
-  await cipher.decryptAndSaveAESKey(buf)
-  console.warn(`pair aes`, cipher.getPairAESKey())
+const importPeerAes = async () => {
+  try {
+    const buf = decodeBase64ToBuffer(await copyClipboard())
+    console.log(`buf`, buf)
+    await cipher.decryptAndSaveAESKey(buf)
+    phase.value = 2
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+const pastePairMsg = async () => {
+  const pairMsg = await copyClipboard()
+  peerMsgSynced.value = false
+  peerMessageUpdateObject.next(pairMsg)
 }
 </script>
+<style scoped>
+.red-circle {
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
+  background-color: red;
+  display: inline-block;
+}
+
+.green-circle {
+  width: 1em;
+  height: 1em;
+  border-radius: 50%;
+  background-color: green;
+  display: inline-block;
+}
+</style>
